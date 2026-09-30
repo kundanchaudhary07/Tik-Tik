@@ -53,7 +53,6 @@ export class RealEmailProvider implements EmailProvider {
   private sentCount = 0;
 
   constructor() {
-    // Read each SMTP variable independently.
     this.host = (process.env.SMTP_HOST || "").trim();
     this.port = Number(process.env.SMTP_PORT || "587");
     this.user = (process.env.SMTP_USER || "").trim();
@@ -61,26 +60,28 @@ export class RealEmailProvider implements EmailProvider {
     this.fromEmail = (process.env.SMTP_FROM_EMAIL || "").trim();
 
     this.secure =
-      String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true" ||
-      this.port === 465;
+      String(process.env.SMTP_SECURE || "")
+        .trim()
+        .toLowerCase() === "true" || this.port === 465;
 
     /*
-     * Basic configuration validation.
+     * SMTP_HOST must be a hostname.
      *
-     * SMTP_HOST must be a hostname such as:
+     * Correct:
      * smtp.gmail.com
      *
-     * It must NOT be:
+     * Incorrect:
      * someone@gmail.com
      */
     const looksLikeEmailAddress = this.host.includes("@");
 
     if (looksLikeEmailAddress) {
       console.error(
-        `[SMTP CONFIG ERROR] SMTP_HOST must be a mail server hostname, not an email address.`
+        "[SMTP CONFIG ERROR] SMTP_HOST must be a mail server hostname, not an email address."
       );
+
       console.error(
-        `[SMTP CONFIG ERROR] Expected something like smtp.gmail.com.`
+        "[SMTP CONFIG ERROR] Expected something like smtp.gmail.com."
       );
 
       this.smtpConfigured = false;
@@ -96,10 +97,9 @@ export class RealEmailProvider implements EmailProvider {
     );
 
     /*
-     * Never log SMTP password.
+     * Safe diagnostic logging.
      *
-     * This diagnostic tells us exactly which non-secret values
-     * the application is using at runtime.
+     * NEVER log SMTP_PASSWORD.
      */
     console.log("[SMTP CONFIG]", {
       host: this.host || "(missing)",
@@ -110,6 +110,17 @@ export class RealEmailProvider implements EmailProvider {
       configured: this.smtpConfigured,
     });
 
+    /*
+     * Create real SMTP transporter.
+     *
+     * Gmail:
+     * smtp.gmail.com
+     * port 587
+     * secure false
+     *
+     * Explicit timeouts prevent the application from waiting
+     * indefinitely when the SMTP connection cannot be established.
+     */
     if (
       this.smtpConfigured &&
       this.host !== "localhost" &&
@@ -124,6 +135,10 @@ export class RealEmailProvider implements EmailProvider {
           user: this.user,
           pass: this.pass,
         },
+
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
 
         tls: {
           rejectUnauthorized: true,
@@ -144,6 +159,55 @@ export class RealEmailProvider implements EmailProvider {
     return this.sentCount;
   }
 
+  /**
+   * Test SMTP connectivity/authentication without sending an email.
+   *
+   * Useful for production diagnostics.
+   */
+  async verifyConnection(): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    if (!this.smtpConfigured) {
+      return {
+        success: false,
+        error:
+          "SMTP_NOT_CONFIGURED: Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM_EMAIL correctly.",
+      };
+    }
+
+    if (!this.transporter) {
+      return {
+        success: false,
+        error: "SMTP_TRANSPORTER_NOT_AVAILABLE",
+      };
+    }
+
+    try {
+      await this.transporter.verify();
+
+      console.log(
+        `[SMTP VERIFY] Connection and authentication successful: ${this.host}:${this.port}`
+      );
+
+      return {
+        success: true,
+      };
+    } catch (err: any) {
+      const errorMessage =
+        err?.message || "SMTP connection verification failed";
+
+      console.error(
+        `[SMTP VERIFY ERROR] ${this.host}:${this.port}: ${errorMessage}`
+      );
+
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    }
+  }
+
   async sendEmail(message: EmailMessage): Promise<EmailSendResult> {
     if (!this.smtpConfigured) {
       return {
@@ -154,7 +218,9 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
-    // Basic recipient validation.
+    /*
+     * Correct email format validation.
+     */
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(message.to)) {
@@ -180,12 +246,15 @@ export class RealEmailProvider implements EmailProvider {
         to: message.to,
         subject: message.subject,
         text: message.text,
-        html: message.html || message.text.replace(/\n/g, "<br/>"),
+        html:
+          message.html ||
+          message.text.replace(/\n/g, "<br/>"),
       });
 
       this.sentCount++;
 
-      const safeMsgId = info.messageId || `smtp-${Date.now()}`;
+      const safeMessageId =
+        info.messageId || `smtp-${Date.now()}`;
 
       console.log(
         `[EMAIL DISPATCH] Real SMTP sent to=${message.to} subject="${message.subject}"`
@@ -193,23 +262,28 @@ export class RealEmailProvider implements EmailProvider {
 
       return {
         success: true,
-        messageId: safeMsgId,
+        messageId: safeMessageId,
       };
     } catch (err: any) {
-      const errMsg = err?.message || "SMTP connection failure";
+      const errorMessage =
+        err?.message || "SMTP connection failure";
 
       const isTransient =
-        !errMsg.includes("550") &&
-        !errMsg.includes("INVALID") &&
-        !errMsg.includes("No recipients");
+        !errorMessage.includes("550") &&
+        !errorMessage.includes("551") &&
+        !errorMessage.includes("552") &&
+        !errorMessage.includes("553") &&
+        !errorMessage.includes("554") &&
+        !errorMessage.includes("INVALID") &&
+        !errorMessage.includes("No recipients");
 
       console.error(
-        `[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}: ${errMsg}`
+        `[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}: ${errorMessage}`
       );
 
       return {
         success: false,
-        error: `SMTP_DELIVERY_FAILURE: ${errMsg}`,
+        error: `SMTP_DELIVERY_FAILURE: ${errorMessage}`,
         isTransient,
       };
     }
@@ -242,7 +316,9 @@ export class TestEmailProvider implements EmailProvider {
     return this.sentCount;
   }
 
-  async sendEmail(message: EmailMessage): Promise<EmailSendResult> {
+  async sendEmail(
+    message: EmailMessage
+  ): Promise<EmailSendResult> {
     if (this.failureMode === "TRANSIENT_TIMEOUT") {
       return {
         success: false,
@@ -296,6 +372,7 @@ export class TestEmailProvider implements EmailProvider {
 
 // Singleton instances
 export const realEmailProvider = new RealEmailProvider();
+
 export const testEmailProvider = new TestEmailProvider();
 
 let activeProvider: EmailProvider = realEmailProvider;
@@ -304,6 +381,8 @@ export function getActiveEmailProvider(): EmailProvider {
   return activeProvider;
 }
 
-export function setActiveEmailProvider(provider: EmailProvider) {
+export function setActiveEmailProvider(
+  provider: EmailProvider
+) {
   activeProvider = provider;
 }
