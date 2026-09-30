@@ -1,8 +1,8 @@
 import dns from "dns";
 import dotenv from "dotenv";
 
-// Prefer IPv4 for outbound network connections.
-// Render currently cannot reach Gmail's IPv6 SMTP address.
+// Render was previously trying Gmail over IPv6.
+// Prefer IPv4 for SMTP connections.
 dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config({ override: true });
@@ -111,15 +111,17 @@ export class RealEmailProvider implements EmailProvider {
           pass: this.pass,
         },
 
-        // Prevent the app from hanging indefinitely
-        // while connecting to the SMTP server.
+        // Connection timeout.
         connectionTimeout: 15000,
 
-        // Maximum time allowed to receive the SMTP greeting.
+        // SMTP greeting timeout.
         greetingTimeout: 15000,
 
-        // Maximum idle socket time.
+        // Socket inactivity timeout.
         socketTimeout: 20000,
+
+        // DNS lookup timeout.
+        dnsTimeout: 10000,
 
         tls: {
           rejectUnauthorized: true,
@@ -140,6 +142,11 @@ export class RealEmailProvider implements EmailProvider {
     return this.sentCount;
   }
 
+  /**
+   * Test SMTP connectivity and authentication.
+   *
+   * This does not send an email.
+   */
   async verifyConnection(): Promise<{
     success: boolean;
     error?: string;
@@ -159,11 +166,15 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
+    console.log(
+      `[SMTP VERIFY] Testing connection to ${this.host}:${this.port} using IPv4 preference...`
+    );
+
     try {
       await this.transporter.verify();
 
       console.log(
-        `[SMTP VERIFY] Connection and authentication successful: ${this.host}:${this.port}`
+        `[SMTP VERIFY] SUCCESS: ${this.host}:${this.port} connection and authentication successful`
       );
 
       return {
@@ -173,18 +184,30 @@ export class RealEmailProvider implements EmailProvider {
       const errorMessage =
         err?.message || "SMTP connection verification failed";
 
+      const errorCode = err?.code || "UNKNOWN";
+
       console.error(
-        `[SMTP VERIFY ERROR] ${this.host}:${this.port}: ${errorMessage}`
+        `[SMTP VERIFY ERROR] ${this.host}:${this.port}`
+      );
+
+      console.error(
+        `[SMTP VERIFY ERROR] code=${errorCode}`
+      );
+
+      console.error(
+        `[SMTP VERIFY ERROR] message=${errorMessage}`
       );
 
       return {
         success: false,
-        error: errorMessage,
+        error: `${errorCode}: ${errorMessage}`,
       };
     }
   }
 
-  async sendEmail(message: EmailMessage): Promise<EmailSendResult> {
+  async sendEmail(
+    message: EmailMessage
+  ): Promise<EmailSendResult> {
     if (!this.smtpConfigured) {
       return {
         success: false,
@@ -194,12 +217,14 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(message.to)) {
       return {
         success: false,
-        error: `INVALID_EMAIL: Recipient address syntax rejected: ${message.to}`,
+        error:
+          `INVALID_EMAIL: Recipient address syntax rejected: ${message.to}`,
         isTransient: false,
       };
     }
@@ -214,6 +239,10 @@ export class RealEmailProvider implements EmailProvider {
     }
 
     try {
+      console.log(
+        `[EMAIL DISPATCH] Connecting to ${this.host}:${this.port} for recipient=${message.to}`
+      );
+
       const info = await this.transporter.sendMail({
         from: message.from || this.fromEmail,
 
@@ -237,6 +266,10 @@ export class RealEmailProvider implements EmailProvider {
         `[EMAIL DISPATCH] Real SMTP sent to=${message.to} subject="${message.subject}"`
       );
 
+      console.log(
+        `[EMAIL DISPATCH] Provider=${this.getProviderName()}`
+      );
+
       return {
         success: true,
         messageId: safeMessageId,
@@ -244,6 +277,9 @@ export class RealEmailProvider implements EmailProvider {
     } catch (err: any) {
       const errorMessage =
         err?.message || "SMTP connection failure";
+
+      const errorCode =
+        err?.code || "UNKNOWN";
 
       const isTransient =
         !errorMessage.includes("550") &&
@@ -255,19 +291,34 @@ export class RealEmailProvider implements EmailProvider {
         !errorMessage.includes("No recipients");
 
       console.error(
-        `[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}: ${errorMessage}`
+        `[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}`
+      );
+
+      console.error(
+        `[EMAIL DISPATCH ERROR] code=${errorCode}`
+      );
+
+      console.error(
+        `[EMAIL DISPATCH ERROR] message=${errorMessage}`
+      );
+
+      console.error(
+        `[EMAIL DISPATCH ERROR] provider=${this.getProviderName()}`
       );
 
       return {
         success: false,
-        error: `SMTP_DELIVERY_FAILURE: ${errorMessage}`,
+        error:
+          `SMTP_DELIVERY_FAILURE: ${errorCode}: ${errorMessage}`,
         isTransient,
       };
     }
   }
 }
 
-export class TestEmailProvider implements EmailProvider {
+export class TestEmailProvider
+  implements EmailProvider
+{
   public mailbox: (EmailMessage & {
     sentAt: string;
     messageId: string;
@@ -291,7 +342,10 @@ export class TestEmailProvider implements EmailProvider {
   async sendEmail(
     message: EmailMessage
   ): Promise<EmailSendResult> {
-    if (this.failureMode === "TRANSIENT_TIMEOUT") {
+    if (
+      this.failureMode ===
+      "TRANSIENT_TIMEOUT"
+    ) {
       return {
         success: false,
         error:
@@ -300,7 +354,10 @@ export class TestEmailProvider implements EmailProvider {
       };
     }
 
-    if (this.failureMode === "PERMANENT_REJECT") {
+    if (
+      this.failureMode ===
+      "PERMANENT_REJECT"
+    ) {
       return {
         success: false,
         error:
@@ -309,19 +366,22 @@ export class TestEmailProvider implements EmailProvider {
       };
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(message.to)) {
       return {
         success: false,
-        error: `INVALID_EMAIL: Bad address format ${message.to}`,
+        error:
+          `INVALID_EMAIL: Bad address format ${message.to}`,
         isTransient: false,
       };
     }
 
-    const messageId = `test-msg-${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2, 7)}`;
+    const messageId =
+      `test-msg-${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2, 7)}`;
 
     this.mailbox.push({
       ...message,
