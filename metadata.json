@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Remix Remix Productivity Platform",
+  "description": "Production engineering learning lab and core productivity system featuring deterministic urgency calculations, Eisenhower priority matrix, subtask completion cascades, and scheduled reminders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

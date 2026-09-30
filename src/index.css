@@ -1,0 +1,503 @@
+@import "tailwindcss";
+
+:root {
+  /* Global Typography System */
+  --font-inter: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-homepage: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Tik Tik Light Theme Palette */
+  --bg-light: #F7FCFC;
+  --surface: #FFFFFF;
+  --surface-soft: #DDF2F2;
+  --surface-muted: #B8DEDF;
+  --primary: #0F777A;
+  --primary-dark: #07383D;
+  --accent: #8BCDCF;
+  --accent-light: #E4F5F5;
+  --text-primary: #07383D;
+  --text-secondary: #2C6367;
+  --text-muted: #5B888B;
+  --border: #B8DEDF;
+  --border-light: #DDF2F2;
+}
+
+*,
+*::before,
+*::after,
+html,
+body,
+input,
+button,
+select,
+textarea,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+a,
+label {
+  font-family: var(--font-inter);
+}
+
+/* Homepage preservation: retain exact approved typography stack for homepage */
+.homepage-scope,
+.homepage-scope *:not(.homepage-footer):not(.homepage-footer *) {
+  font-family: var(--font-homepage);
+}
+
+/* Homepage footer adopts the new Inter typography system */
+.homepage-footer,
+.homepage-footer * {
+  font-family: var(--font-inter) !important;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-light);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-muted) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-light);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-muted);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* Base keyframe animations */
+@keyframes heroTextReveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ambientBreathe {
+  0%, 100% {
+    transform: scale(1) translateY(0);
+    opacity: 0.28;
+  }
+  50% {
+    transform: scale(1.03) translateY(-4px);
+    opacity: 0.42;
+  }
+}
+
+@keyframes timelinePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(15, 119, 122, 0.4);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 8px rgba(15, 119, 122, 0);
+  }
+}
+
+@keyframes waveFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes sceneFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes clockSubtleBreathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.008);
+  }
+}
+
+@keyframes alarmNaturalFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-5px);
+  }
+  75% {
+    transform: translateY(4px);
+  }
+}
+
+@keyframes alarmShadowScale {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.16;
+  }
+  25% {
+    transform: scale(0.93);
+    opacity: 0.10;
+  }
+  75% {
+    transform: scale(1.05);
+    opacity: 0.20;
+  }
+}
+
+@keyframes alarmPhysicalRing {
+  0%, 100% {
+    transform: rotate(0deg) translate3d(0, 0, 0);
+  }
+  12% {
+    transform: rotate(-1.2deg) translate3d(-1.5px, 0, 0);
+  }
+  24% {
+    transform: rotate(1.2deg) translate3d(1.5px, 0, 0);
+  }
+  36% {
+    transform: rotate(-0.8deg) translate3d(-1px, 0, 0);
+  }
+  48% {
+    transform: rotate(0.8deg) translate3d(1px, 0, 0);
+  }
+  60% {
+    transform: rotate(-0.4deg) translate3d(-0.5px, 0, 0);
+  }
+  72% {
+    transform: rotate(0.4deg) translate3d(0.5px, 0, 0);
+  }
+  85% {
+    transform: rotate(0deg) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bellRingLeft {
+  0%, 100% {
+    transform: rotate(-34deg);
+  }
+  25% {
+    transform: rotate(-36deg);
+  }
+  75% {
+    transform: rotate(-32deg);
+  }
+}
+
+@keyframes bellRingRight {
+  0%, 100% {
+    transform: rotate(34deg);
+  }
+  25% {
+    transform: rotate(32deg);
+  }
+  75% {
+    transform: rotate(36deg);
+  }
+}
+
+@keyframes logoMicroChime {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(-1.5deg);
+  }
+  40% {
+    transform: rotate(1.5deg);
+  }
+  60% {
+    transform: rotate(-0.8deg);
+  }
+  80% {
+    transform: rotate(0.8deg);
+  }
+}
+
+@keyframes logoSubtlePulse {
+  0%, 92%, 100% {
+    transform: scale(1);
+  }
+  95% {
+    transform: scale(1.04);
+  }
+}
+
+/* ========================================================================= */
+/* Coordinated Plan-Time-Remind Animation System                            */
+/* ========================================================================= */
+
+/* Calendar Animations */
+@keyframes heroCalendarCycle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  6% {
+    transform: translateY(-4.5px);
+  }
+  24% {
+    transform: translateY(-4.5px);
+  }
+  32% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes heroCalendarShadow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.12;
+  }
+  6%, 24% {
+    transform: scale(0.92);
+    opacity: 0.07;
+  }
+  32% {
+    transform: scale(1);
+    opacity: 0.12;
+  }
+}
+
+@keyframes heroCalendarTodayPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  6% {
+    transform: scale(1.04);
+    opacity: 0.95;
+  }
+  12%, 22% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  28% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  32% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+}
+
+@keyframes heroCalendarCheckFade {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  10% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  14%, 23% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  29% {
+    opacity: 0;
+    transform: scale(0.65);
+  }
+}
+
+/* Bell Animations */
+@keyframes heroBellFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes heroBellSwing {
+  0%, 60%, 100% {
+    transform: rotate(0deg);
+  }
+  64% {
+    transform: rotate(-5deg);
+  }
+  68% {
+    transform: rotate(5deg);
+  }
+  72% {
+    transform: rotate(-4deg);
+  }
+  76% {
+    transform: rotate(4deg);
+  }
+  80% {
+    transform: rotate(-2deg);
+  }
+  84% {
+    transform: rotate(2deg);
+  }
+  88% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes heroBellClapper {
+  0%, 60%, 100% {
+    transform: rotate(0deg);
+  }
+  64% {
+    transform: rotate(4.5deg);
+  }
+  68% {
+    transform: rotate(-4.5deg);
+  }
+  72% {
+    transform: rotate(3.5deg);
+  }
+  76% {
+    transform: rotate(-3.5deg);
+  }
+  80% {
+    transform: rotate(1.5deg);
+  }
+  84% {
+    transform: rotate(-1.5deg);
+  }
+  88% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes heroBellShadow {
+  0%, 60%, 100% {
+    transform: scale(1) translateX(0);
+    opacity: 0.12;
+  }
+  64%, 84% {
+    transform: scale(0.95) translateX(1px);
+    opacity: 0.16;
+  }
+  88% {
+    transform: scale(1) translateX(0);
+    opacity: 0.12;
+  }
+}
+
+@keyframes heroBellDot {
+  0%, 58%, 100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  68%, 84% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+  90% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@keyframes heroBellAcousticWave1 {
+  0%, 64%, 100% {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  68% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  78% {
+    opacity: 0.2;
+    transform: scale(1.16);
+  }
+  85% {
+    opacity: 0;
+    transform: scale(1.24);
+  }
+}
+
+@keyframes heroBellAcousticWave2 {
+  0%, 67%, 100% {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  72% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  81% {
+    opacity: 0.15;
+    transform: scale(1.18);
+  }
+  89% {
+    opacity: 0;
+    transform: scale(1.28);
+  }
+}
+
+@keyframes heroBellAcousticWave3 {
+  0%, 70%, 100% {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  76% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  85% {
+    opacity: 0.1;
+    transform: scale(1.2);
+  }
+  93% {
+    opacity: 0;
+    transform: scale(1.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
