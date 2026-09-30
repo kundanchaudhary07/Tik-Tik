@@ -334,7 +334,8 @@ async function startServer() {
   await redis.waitUntilReady();
 
   const app = express();
-  const PORT = 3000;
+  // Use Render-provided PORT in production; keep 3000 as the local fallback.
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
