@@ -46,7 +46,7 @@ export function verifyPassword(password: string, hash: string): boolean {
 }
 
 export class PostgresDatabase {
-export class PostgresDatabase {
+
   private pool: Pool | null = null;
   private isInitialized = false;
 
