@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
+
 dotenv.config({ override: true });
+
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 
@@ -26,11 +28,20 @@ export interface EmailProvider {
 
 /**
  * RealEmailProvider
- * Connects to a standard SMTP server via nodemailer.
- * Sanitizes all output to ensure secrets, tokens, and passwords are never logged.
+ *
+ * Sends email through a real SMTP server using Nodemailer.
+ *
+ * Environment variables:
+ * SMTP_HOST
+ * SMTP_PORT
+ * SMTP_USER
+ * SMTP_PASSWORD
+ * SMTP_FROM_EMAIL
+ * SMTP_SECURE
  */
 export class RealEmailProvider implements EmailProvider {
   private transporter: Transporter | null = null;
+
   private host: string;
   private port: number;
   private user: string;
@@ -38,28 +49,82 @@ export class RealEmailProvider implements EmailProvider {
   private fromEmail: string;
   private secure: boolean;
   private smtpConfigured: boolean;
+
   private sentCount = 0;
 
   constructor() {
-    this.host = process.env.SMTP_HOST || "";
-    this.port = Number(process.env.SMTP_PORT) || 587;
-    this.user = process.env.SMTP_USER || "";
+    // Read each SMTP variable independently.
+    this.host = (process.env.SMTP_HOST || "").trim();
+    this.port = Number(process.env.SMTP_PORT || "587");
+    this.user = (process.env.SMTP_USER || "").trim();
     this.pass = process.env.SMTP_PASSWORD || "";
-    this.fromEmail = process.env.SMTP_FROM_EMAIL || "";
-    this.secure = process.env.SMTP_SECURE === "true" || this.port === 465;
-    this.smtpConfigured = Boolean(this.host && this.user && this.pass && this.fromEmail);
+    this.fromEmail = (process.env.SMTP_FROM_EMAIL || "").trim();
 
-    if (this.smtpConfigured && this.host !== "localhost" && this.host !== "127.0.0.1") {
+    this.secure =
+      String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true" ||
+      this.port === 465;
+
+    /*
+     * Basic configuration validation.
+     *
+     * SMTP_HOST must be a hostname such as:
+     * smtp.gmail.com
+     *
+     * It must NOT be:
+     * someone@gmail.com
+     */
+    const looksLikeEmailAddress = this.host.includes("@");
+
+    if (looksLikeEmailAddress) {
+      console.error(
+        `[SMTP CONFIG ERROR] SMTP_HOST must be a mail server hostname, not an email address.`
+      );
+      console.error(
+        `[SMTP CONFIG ERROR] Expected something like smtp.gmail.com.`
+      );
+
+      this.smtpConfigured = false;
+      return;
+    }
+
+    this.smtpConfigured = Boolean(
+      this.host &&
+        this.port > 0 &&
+        this.user &&
+        this.pass &&
+        this.fromEmail
+    );
+
+    /*
+     * Never log SMTP password.
+     *
+     * This diagnostic tells us exactly which non-secret values
+     * the application is using at runtime.
+     */
+    console.log("[SMTP CONFIG]", {
+      host: this.host || "(missing)",
+      port: this.port,
+      user: this.user || "(missing)",
+      from: this.fromEmail || "(missing)",
+      secure: this.secure,
+      configured: this.smtpConfigured,
+    });
+
+    if (
+      this.smtpConfigured &&
+      this.host !== "localhost" &&
+      this.host !== "127.0.0.1"
+    ) {
       this.transporter = nodemailer.createTransport({
         host: this.host,
         port: this.port,
         secure: this.secure,
-        auth: this.user
-          ? {
-              user: this.user,
-              pass: this.pass,
-            }
-          : undefined,
+
+        auth: {
+          user: this.user,
+          pass: this.pass,
+        },
+
         tls: {
           rejectUnauthorized: true,
         },
@@ -68,7 +133,11 @@ export class RealEmailProvider implements EmailProvider {
   }
 
   getProviderName(): string {
-    return this.host ? `RealSMTP (${this.host}:${this.port})` : "RealSMTP (Local Loopback / Diagnostic)";
+    if (!this.host) {
+      return "RealSMTP (Not Configured)";
+    }
+
+    return `RealSMTP (${this.host}:${this.port})`;
   }
 
   getSentCount(): number {
@@ -79,13 +148,15 @@ export class RealEmailProvider implements EmailProvider {
     if (!this.smtpConfigured) {
       return {
         success: false,
-        error: "SMTP_NOT_CONFIGURED: Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM_EMAIL.",
+        error:
+          "SMTP_NOT_CONFIGURED: Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM_EMAIL correctly.",
         isTransient: false,
       };
     }
 
-    // Basic email format validation
+    // Basic recipient validation.
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (!emailRegex.test(message.to)) {
       return {
         success: false,
@@ -94,52 +165,73 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
-    // If real transporter is configured, dispatch via nodemailer
-    if (this.transporter) {
-      try {
-        const info = await this.transporter.sendMail({
-          from: message.from || this.fromEmail,
-          to: message.to,
-          subject: message.subject,
-          text: message.text,
-          html: message.html || message.text.replace(/\n/g, "<br/>"),
-        });
-
-        this.sentCount++;
-        const safeMsgId = info.messageId || `smtp-${Date.now()}`;
-        console.log(`[EMAIL DISPATCH] Real SMTP sent to=${message.to} subject="${message.subject}"`);
-        return {
-          success: true,
-          messageId: safeMsgId,
-        };
-      } catch (err: any) {
-        const errMsg = err?.message || "SMTP connection failure";
-        const isTransient = !errMsg.includes("550") && !errMsg.includes("INVALID") && !errMsg.includes("No recipients");
-        console.error(`[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}: ${errMsg}`);
-        return {
-          success: false,
-          error: `SMTP_DELIVERY_FAILURE: ${errMsg}`,
-          isTransient,
-        };
-      }
+    if (!this.transporter) {
+      return {
+        success: false,
+        error:
+          "SMTP_NOT_CONFIGURED: A non-loopback SMTP provider is required.",
+        isTransient: false,
+      };
     }
 
-    return {
-      success: false,
-      error: "SMTP_NOT_CONFIGURED: A non-loopback SMTP provider is required.",
-      isTransient: false,
-    };
+    try {
+      const info = await this.transporter.sendMail({
+        from: message.from || this.fromEmail,
+        to: message.to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html || message.text.replace(/\n/g, "<br/>"),
+      });
+
+      this.sentCount++;
+
+      const safeMsgId = info.messageId || `smtp-${Date.now()}`;
+
+      console.log(
+        `[EMAIL DISPATCH] Real SMTP sent to=${message.to} subject="${message.subject}"`
+      );
+
+      return {
+        success: true,
+        messageId: safeMsgId,
+      };
+    } catch (err: any) {
+      const errMsg = err?.message || "SMTP connection failure";
+
+      const isTransient =
+        !errMsg.includes("550") &&
+        !errMsg.includes("INVALID") &&
+        !errMsg.includes("No recipients");
+
+      console.error(
+        `[EMAIL DISPATCH ERROR] Failed to send email to=${message.to}: ${errMsg}`
+      );
+
+      return {
+        success: false,
+        error: `SMTP_DELIVERY_FAILURE: ${errMsg}`,
+        isTransient,
+      };
+    }
   }
 }
 
 /**
  * TestEmailProvider
- * In-memory test provider for unit tests and Failure Lab simulations.
- * Records messages in an inspectable test mailbox.
+ *
+ * In-memory provider used for unit tests and Failure Lab simulations.
  */
 export class TestEmailProvider implements EmailProvider {
-  public mailbox: (EmailMessage & { sentAt: string; messageId: string })[] = [];
-  public failureMode: "NONE" | "TRANSIENT_TIMEOUT" | "PERMANENT_REJECT" = "NONE";
+  public mailbox: (EmailMessage & {
+    sentAt: string;
+    messageId: string;
+  })[] = [];
+
+  public failureMode:
+    | "NONE"
+    | "TRANSIENT_TIMEOUT"
+    | "PERMANENT_REJECT" = "NONE";
+
   private sentCount = 0;
 
   getProviderName(): string {
@@ -154,7 +246,8 @@ export class TestEmailProvider implements EmailProvider {
     if (this.failureMode === "TRANSIENT_TIMEOUT") {
       return {
         success: false,
-        error: "SMTP 421 4.4.2 Connection timed out to destination mail exchanger",
+        error:
+          "SMTP 421 4.4.2 Connection timed out to destination mail exchanger",
         isTransient: true,
       };
     }
@@ -162,12 +255,14 @@ export class TestEmailProvider implements EmailProvider {
     if (this.failureMode === "PERMANENT_REJECT") {
       return {
         success: false,
-        error: "SMTP 550 5.1.1 User mailbox not found / permanent rejection",
+        error:
+          "SMTP 550 5.1.1 User mailbox not found / permanent rejection",
         isTransient: false,
       };
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (!emailRegex.test(message.to)) {
       return {
         success: false,
@@ -176,12 +271,16 @@ export class TestEmailProvider implements EmailProvider {
       };
     }
 
-    const messageId = `test-msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const messageId = `test-msg-${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2, 7)}`;
+
     this.mailbox.push({
       ...message,
       sentAt: new Date().toISOString(),
       messageId,
     });
+
     this.sentCount++;
 
     return {
