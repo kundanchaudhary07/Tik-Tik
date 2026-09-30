@@ -1,4 +1,9 @@
+import dns from "dns";
 import dotenv from "dotenv";
+
+// Prefer IPv4 for outbound network connections.
+// Render currently cannot reach Gmail's IPv6 SMTP address.
+dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config({ override: true });
 
@@ -26,19 +31,6 @@ export interface EmailProvider {
   getSentCount(): number;
 }
 
-/**
- * RealEmailProvider
- *
- * Sends email through a real SMTP server using Nodemailer.
- *
- * Environment variables:
- * SMTP_HOST
- * SMTP_PORT
- * SMTP_USER
- * SMTP_PASSWORD
- * SMTP_FROM_EMAIL
- * SMTP_SECURE
- */
 export class RealEmailProvider implements EmailProvider {
   private transporter: Transporter | null = null;
 
@@ -54,9 +46,13 @@ export class RealEmailProvider implements EmailProvider {
 
   constructor() {
     this.host = (process.env.SMTP_HOST || "").trim();
+
     this.port = Number(process.env.SMTP_PORT || "587");
+
     this.user = (process.env.SMTP_USER || "").trim();
+
     this.pass = process.env.SMTP_PASSWORD || "";
+
     this.fromEmail = (process.env.SMTP_FROM_EMAIL || "").trim();
 
     this.secure =
@@ -64,15 +60,6 @@ export class RealEmailProvider implements EmailProvider {
         .trim()
         .toLowerCase() === "true" || this.port === 465;
 
-    /*
-     * SMTP_HOST must be a hostname.
-     *
-     * Correct:
-     * smtp.gmail.com
-     *
-     * Incorrect:
-     * someone@gmail.com
-     */
     const looksLikeEmailAddress = this.host.includes("@");
 
     if (looksLikeEmailAddress) {
@@ -85,6 +72,7 @@ export class RealEmailProvider implements EmailProvider {
       );
 
       this.smtpConfigured = false;
+
       return;
     }
 
@@ -96,11 +84,6 @@ export class RealEmailProvider implements EmailProvider {
         this.fromEmail
     );
 
-    /*
-     * Safe diagnostic logging.
-     *
-     * NEVER log SMTP_PASSWORD.
-     */
     console.log("[SMTP CONFIG]", {
       host: this.host || "(missing)",
       port: this.port,
@@ -108,19 +91,9 @@ export class RealEmailProvider implements EmailProvider {
       from: this.fromEmail || "(missing)",
       secure: this.secure,
       configured: this.smtpConfigured,
+      dnsOrder: "ipv4first",
     });
 
-    /*
-     * Create real SMTP transporter.
-     *
-     * Gmail:
-     * smtp.gmail.com
-     * port 587
-     * secure false
-     *
-     * Explicit timeouts prevent the application from waiting
-     * indefinitely when the SMTP connection cannot be established.
-     */
     if (
       this.smtpConfigured &&
       this.host !== "localhost" &&
@@ -128,7 +101,9 @@ export class RealEmailProvider implements EmailProvider {
     ) {
       this.transporter = nodemailer.createTransport({
         host: this.host,
+
         port: this.port,
+
         secure: this.secure,
 
         auth: {
@@ -136,8 +111,14 @@ export class RealEmailProvider implements EmailProvider {
           pass: this.pass,
         },
 
+        // Prevent the app from hanging indefinitely
+        // while connecting to the SMTP server.
         connectionTimeout: 15000,
+
+        // Maximum time allowed to receive the SMTP greeting.
         greetingTimeout: 15000,
+
+        // Maximum idle socket time.
         socketTimeout: 20000,
 
         tls: {
@@ -159,11 +140,6 @@ export class RealEmailProvider implements EmailProvider {
     return this.sentCount;
   }
 
-  /**
-   * Test SMTP connectivity/authentication without sending an email.
-   *
-   * Useful for production diagnostics.
-   */
   async verifyConnection(): Promise<{
     success: boolean;
     error?: string;
@@ -218,9 +194,6 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
-    /*
-     * Correct email format validation.
-     */
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(message.to)) {
@@ -243,9 +216,13 @@ export class RealEmailProvider implements EmailProvider {
     try {
       const info = await this.transporter.sendMail({
         from: message.from || this.fromEmail,
+
         to: message.to,
+
         subject: message.subject,
+
         text: message.text,
+
         html:
           message.html ||
           message.text.replace(/\n/g, "<br/>"),
@@ -290,11 +267,6 @@ export class RealEmailProvider implements EmailProvider {
   }
 }
 
-/**
- * TestEmailProvider
- *
- * In-memory provider used for unit tests and Failure Lab simulations.
- */
 export class TestEmailProvider implements EmailProvider {
   public mailbox: (EmailMessage & {
     sentAt: string;
@@ -370,12 +342,14 @@ export class TestEmailProvider implements EmailProvider {
   }
 }
 
-// Singleton instances
-export const realEmailProvider = new RealEmailProvider();
+export const realEmailProvider =
+  new RealEmailProvider();
 
-export const testEmailProvider = new TestEmailProvider();
+export const testEmailProvider =
+  new TestEmailProvider();
 
-let activeProvider: EmailProvider = realEmailProvider;
+let activeProvider: EmailProvider =
+  realEmailProvider;
 
 export function getActiveEmailProvider(): EmailProvider {
   return activeProvider;
