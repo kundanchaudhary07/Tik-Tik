@@ -1,7 +1,5 @@
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
-import { PGlite } from "@electric-sql/pglite";
+import { Pool } from "pg";
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 
@@ -48,83 +46,123 @@ export function verifyPassword(password: string, hash: string): boolean {
 }
 
 export class PostgresDatabase {
-  private pglite: PGlite | null = null;
+export class PostgresDatabase {
+  private pool: Pool | null = null;
   private isInitialized = false;
-  private dataDir = path.resolve("./data/postgres");
 
-  public isConnected = true;
+  public isConnected = false;
   public queryLatencyMs = 1;
   public connectionPool = {
     size: 10,
-    checkedOut: 2,
+    checkedOut: 0,
     overflow: 0,
-    available: 8,
+    available: 10,
   };
 
   // Temporary runtime locks (SKIP LOCKED simulation / memory locks)
   private lockedReminderIds = new Set<number>();
 
   async init(): Promise<void> {
-    if (this.isInitialized && this.pglite) return;
+    if (this.isInitialized && this.pool) return;
 
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    }
+    const databaseUrl = process.env.DATABASE_URL?.trim();
 
-    try {
-      this.pglite = new PGlite(this.dataDir);
-      await this.pglite.waitReady;
-    } catch (err) {
-      this.pglite = null;
+    if (!databaseUrl) {
       throw new Error(
-        `PGlite could not open the existing database at ${this.dataDir}. ` +
-          "The database was left untouched; inspect the original startup error before retrying.",
-        { cause: err }
+        "[POSTGRES] DATABASE_URL is required. Configure it in the environment before starting Tik Tik."
       );
     }
 
-    // Run schema creation (Non-destructive: IF NOT EXISTS)
-    await this.applySchema();
+    const poolSize = Number(process.env.DB_POOL_SIZE || 10);
+    const maxOverflow = Number(process.env.DB_MAX_OVERFLOW || 20);
+    const maxConnections = Math.max(1, poolSize + maxOverflow);
 
-    // Bootstrap initial admin (Non-destructive: never deletes any user data)
-    await this.seedInitialAdmin();
+    this.pool = new Pool({
+      connectionString: databaseUrl,
+      max: maxConnections,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+      allowExitOnIdle: false,
+      ssl:
+        process.env.DATABASE_SSL === "true"
+          ? { rejectUnauthorized: false }
+          : undefined,
+    });
 
-    this.isInitialized = true;
-    console.log(`[POSTGRES] Central PostgreSQL database ready at ${this.dataDir}`);
+    try {
+      await this.pool.query("SELECT 1;");
+      await this.applySchema();
+      await this.seedInitialAdmin();
 
-    // Graceful shutdown hooks
-    const shutdownHandler = async () => {
-      try {
-        await this.close();
-      } catch {}
-    };
-    process.once("SIGTERM", shutdownHandler);
-    process.once("SIGINT", shutdownHandler);
+      this.isInitialized = true;
+      this.isConnected = true;
+      this.connectionPool = {
+        size: maxConnections,
+        checkedOut: 0,
+        overflow: 0,
+        available: maxConnections,
+      };
+
+      console.log("[POSTGRES] Connected to configured PostgreSQL database.");
+
+      const shutdownHandler = async () => {
+        try {
+          await this.close();
+        } catch {}
+      };
+
+      process.once("SIGTERM", shutdownHandler);
+      process.once("SIGINT", shutdownHandler);
+    } catch (err) {
+      this.isConnected = false;
+      this.isInitialized = false;
+
+      if (this.pool) {
+        try {
+          await this.pool.end();
+        } catch {}
+      }
+
+      this.pool = null;
+
+      throw new Error(
+        "[POSTGRES] Could not connect to the configured PostgreSQL database.",
+        { cause: err }
+      );
+    }
   }
 
   async close(): Promise<void> {
-    if (this.pglite) {
-      await this.pglite.close();
-      this.pglite = null;
-      this.isInitialized = false;
+    if (this.pool) {
+      await this.pool.end();
+      this.pool = null;
     }
+
+    this.isConnected = false;
+    this.isInitialized = false;
   }
 
-  get client(): PGlite {
-    if (!this.pglite) {
+  get client(): Pool {
+    if (!this.pool) {
       throw new Error("PostgreSQL database is not initialized. Call init() first.");
     }
-    return this.pglite;
+    return this.pool;
   }
 
   async query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
     const start = Date.now();
+
     try {
-      const res = await this.client.query<T>(sql, params);
+      const res = await this.client.query(sql, params);
       this.queryLatencyMs = Math.max(1, Date.now() - start);
-      return res.rows;
+      return res.rows as T[];
     } catch (err) {
-      console.error("[POSTGRES QUERY ERROR]", { sql, params, err });
+      console.error("[POSTGRES QUERY ERROR]", {
+        sql,
+        parameterCount: params.length,
+        err,
+      });
       throw err;
     }
   }
@@ -135,7 +173,7 @@ export class PostgresDatabase {
   }
 
   async exec(sql: string): Promise<void> {
-    await this.client.exec(sql);
+    await this.client.query(sql);
   }
 
   private async applySchema(): Promise<void> {
