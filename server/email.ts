@@ -1,14 +1,11 @@
 import dns from "dns";
 import dotenv from "dotenv";
-
-// Render was previously trying Gmail over IPv6.
-// Prefer IPv4 for SMTP connections.
-dns.setDefaultResultOrder("ipv4first");
+import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
 dotenv.config({ override: true });
 
-import nodemailer from "nodemailer";
-import type { Transporter } from "nodemailer";
+dns.setDefaultResultOrder("ipv4first");
 
 export interface EmailMessage {
   to: string;
@@ -46,13 +43,9 @@ export class RealEmailProvider implements EmailProvider {
 
   constructor() {
     this.host = (process.env.SMTP_HOST || "").trim();
-
     this.port = Number(process.env.SMTP_PORT || "587");
-
     this.user = (process.env.SMTP_USER || "").trim();
-
     this.pass = process.env.SMTP_PASSWORD || "";
-
     this.fromEmail = (process.env.SMTP_FROM_EMAIL || "").trim();
 
     this.secure =
@@ -72,7 +65,6 @@ export class RealEmailProvider implements EmailProvider {
       );
 
       this.smtpConfigured = false;
-
       return;
     }
 
@@ -101,9 +93,7 @@ export class RealEmailProvider implements EmailProvider {
     ) {
       this.transporter = nodemailer.createTransport({
         host: this.host,
-
         port: this.port,
-
         secure: this.secure,
 
         auth: {
@@ -111,20 +101,69 @@ export class RealEmailProvider implements EmailProvider {
           pass: this.pass,
         },
 
-        // Connection timeout.
         connectionTimeout: 15000,
-
-        // SMTP greeting timeout.
         greetingTimeout: 15000,
-
-        // Socket inactivity timeout.
         socketTimeout: 20000,
-
-        // DNS lookup timeout.
         dnsTimeout: 10000,
 
         tls: {
           rejectUnauthorized: true,
+          servername: this.host,
+        },
+
+        /**
+         * Force Nodemailer to use an IPv4 address.
+         *
+         * Render previously attempted:
+         * 2607:f8b0:...:587
+         *
+         * which resulted in:
+         * ENETUNREACH
+         */
+        lookup: (
+          hostname: string,
+          options: any,
+          callback: (
+            error: Error | null,
+            address?: string,
+            family?: number
+          ) => void
+        ) => {
+          dns.resolve4(
+            hostname,
+            (error, addresses) => {
+              if (error) {
+                console.error(
+                  `[SMTP DNS ERROR] IPv4 lookup failed for ${hostname}:`,
+                  error.message
+                );
+
+                callback(error);
+                return;
+              }
+
+              if (!addresses || addresses.length === 0) {
+                const lookupError = new Error(
+                  `No IPv4 address found for ${hostname}`
+                );
+
+                console.error(
+                  `[SMTP DNS ERROR] ${lookupError.message}`
+                );
+
+                callback(lookupError);
+                return;
+              }
+
+              const ipv4Address = addresses[0];
+
+              console.log(
+                `[SMTP DNS] ${hostname} resolved to IPv4 ${ipv4Address}`
+              );
+
+              callback(null, ipv4Address, 4);
+            }
+          );
         },
       });
     }
@@ -142,11 +181,6 @@ export class RealEmailProvider implements EmailProvider {
     return this.sentCount;
   }
 
-  /**
-   * Test SMTP connectivity and authentication.
-   *
-   * This does not send an email.
-   */
   async verifyConnection(): Promise<{
     success: boolean;
     error?: string;
@@ -167,28 +201,25 @@ export class RealEmailProvider implements EmailProvider {
     }
 
     console.log(
-      `[SMTP VERIFY] Testing connection to ${this.host}:${this.port} using IPv4 preference...`
+      `[SMTP VERIFY] Testing ${this.host}:${this.port} with forced IPv4`
     );
 
     try {
       await this.transporter.verify();
 
       console.log(
-        `[SMTP VERIFY] SUCCESS: ${this.host}:${this.port} connection and authentication successful`
+        `[SMTP VERIFY] SUCCESS: ${this.host}:${this.port}`
       );
 
       return {
         success: true,
       };
     } catch (err: any) {
-      const errorMessage =
-        err?.message || "SMTP connection verification failed";
-
       const errorCode = err?.code || "UNKNOWN";
 
-      console.error(
-        `[SMTP VERIFY ERROR] ${this.host}:${this.port}`
-      );
+      const errorMessage =
+        err?.message ||
+        "SMTP connection verification failed";
 
       console.error(
         `[SMTP VERIFY ERROR] code=${errorCode}`
@@ -240,18 +271,14 @@ export class RealEmailProvider implements EmailProvider {
 
     try {
       console.log(
-        `[EMAIL DISPATCH] Connecting to ${this.host}:${this.port} for recipient=${message.to}`
+        `[EMAIL DISPATCH] Connecting to ${this.host}:${this.port} using forced IPv4 for recipient=${message.to}`
       );
 
       const info = await this.transporter.sendMail({
         from: message.from || this.fromEmail,
-
         to: message.to,
-
         subject: message.subject,
-
         text: message.text,
-
         html:
           message.html ||
           message.text.replace(/\n/g, "<br/>"),
@@ -266,20 +293,15 @@ export class RealEmailProvider implements EmailProvider {
         `[EMAIL DISPATCH] Real SMTP sent to=${message.to} subject="${message.subject}"`
       );
 
-      console.log(
-        `[EMAIL DISPATCH] Provider=${this.getProviderName()}`
-      );
-
       return {
         success: true,
         messageId: safeMessageId,
       };
     } catch (err: any) {
+      const errorCode = err?.code || "UNKNOWN";
+
       const errorMessage =
         err?.message || "SMTP connection failure";
-
-      const errorCode =
-        err?.code || "UNKNOWN";
 
       const isTransient =
         !errorMessage.includes("550") &&
