@@ -1957,7 +1957,29 @@ async function startServer() {
       );
 
       if (!response.ok) {
+        let twilioError: { code?: unknown; message?: unknown; status?: unknown } = {};
+        try {
+          const responseBody = await response.json();
+          if (responseBody && typeof responseBody === "object") {
+            twilioError = responseBody as typeof twilioError;
+          }
+        } catch {
+          // Keep the safe HTTP status diagnostic when Twilio returns non-JSON content.
+        }
+
         console.error(`[TWILIO TEST] SMS failed with status ${response.status}`);
+        const diagnostics = [
+          typeof twilioError.code === "string" || typeof twilioError.code === "number"
+            ? `code=${String(twilioError.code).replace(/[\r\n]/g, " ").slice(0, 100)}`
+            : null,
+          typeof twilioError.message === "string"
+            ? `message=${JSON.stringify(twilioError.message.replace(/[\r\n]/g, " ").slice(0, 500))}`
+            : null,
+          typeof twilioError.status === "string" || typeof twilioError.status === "number"
+            ? `status=${String(twilioError.status).replace(/[\r\n]/g, " ").slice(0, 30)}`
+            : `status=${response.status}`,
+        ].filter(Boolean);
+        console.error(`[TWILIO TEST] Twilio error ${diagnostics.join(" ")}`);
         return res.status(502).json({
           success: false,
           error: { code: "TWILIO_REQUEST_FAILED", message: "Twilio rejected the test SMS request." },
