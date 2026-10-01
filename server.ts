@@ -12,7 +12,7 @@ import { worker } from "./server/worker";
 import { getActiveEmailProvider } from "./server/email";
 import { renderVerificationEmail } from "./server/emailTemplates";
 import { failureLabRouter } from "./server/routes/failureLab";
-import { adminRouter } from "./server/routes/admin";
+import { adminRouter, requireAdminMiddleware } from "./server/routes/admin";
 import {
   UserRecord,
   ActivityRecord,
@@ -1910,6 +1910,76 @@ async function startServer() {
   // ==========================================
   // ADMIN & FAILURE LAB ROUTERS
   // ==========================================
+  // TEMPORARY TEST CODE: isolated production Twilio connectivity check.
+  app.post("/admin/test/twilio-sms", authenticateUser, requireAdminMiddleware, async (req, res) => {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+    const apiKey = process.env.TWILIO_API_KEY?.trim();
+    const apiSecret = process.env.TWILIO_API_SECRET?.trim();
+    const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim();
+
+    if (!accountSid || !apiKey || !apiSecret || !fromNumber) {
+      return res.status(500).json({
+        success: false,
+        error: { code: "TWILIO_NOT_CONFIGURED", message: "Twilio test messaging is not configured." },
+      });
+    }
+
+    const recipient = req.body?.to;
+    if (typeof recipient !== "string" || !/^\+[1-9]\d{7,14}$/.test(recipient.trim())) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "INVALID_PHONE_NUMBER", message: "The 'to' phone number must be a valid E.164 number." },
+      });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    console.log("[TWILIO TEST] SMS request started");
+
+    try {
+      const body = new URLSearchParams({
+        From: fromNumber,
+        To: recipient.trim(),
+        Body: "Tik Tik test SMS: Twilio connection from the production backend is working.",
+      });
+      const response = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString("base64")}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body,
+          signal: controller.signal,
+        }
+      );
+
+      if (!response.ok) {
+        console.error(`[TWILIO TEST] SMS failed with status ${response.status}`);
+        return res.status(502).json({
+          success: false,
+          error: { code: "TWILIO_REQUEST_FAILED", message: "Twilio rejected the test SMS request." },
+        });
+      }
+
+      console.log("[TWILIO TEST] SMS submitted successfully");
+      return res.status(200).json({
+        success: true,
+        message: "Twilio test SMS submitted successfully",
+      });
+    } catch (err: any) {
+      const reason = err?.name === "AbortError" ? "TWILIO_REQUEST_TIMEOUT" : "TWILIO_REQUEST_FAILED";
+      console.error(`[TWILIO TEST] SMS failed with status ${reason}`);
+      return res.status(502).json({
+        success: false,
+        error: { code: reason, message: "The Twilio test SMS request could not be completed." },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
   app.use("/api/admin/failure-lab", authenticateUser, failureLabRouter);
   app.use("/api/admin", authenticateUser, adminRouter);
 
