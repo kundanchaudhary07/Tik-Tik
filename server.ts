@@ -10,6 +10,7 @@ import { redis } from "./server/redis";
 import { scheduler } from "./server/scheduler";
 import { worker } from "./server/worker";
 import { getActiveEmailProvider } from "./server/email";
+import { renderVerificationEmail } from "./server/emailTemplates";
 import { failureLabRouter } from "./server/routes/failureLab";
 import { adminRouter } from "./server/routes/admin";
 import {
@@ -24,7 +25,15 @@ import {
   ReminderStatus,
 } from "./server/types";
 
-const JWT_SECRET = process.env.SECRET_KEY || "productivity_platform_dev_secret_key_super_secure_32_bytes";
+function requireJwtSecret(): string {
+  const secret = process.env.SECRET_KEY?.trim();
+  if (!secret) {
+    throw new Error("SECRET_KEY is required before starting Tik Tik.");
+  }
+  return secret;
+}
+
+const JWT_SECRET = requireJwtSecret();
 const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
 const verificationResendAttempts = new Map<string, number>();
@@ -40,6 +49,10 @@ function hashVerificationToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function hashResetToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 function createVerificationToken(): { rawToken: string; tokenHash: string; expiresAt: string } {
   const rawToken = crypto.randomBytes(32).toString("hex");
   return {
@@ -49,29 +62,17 @@ function createVerificationToken(): { rawToken: string; tokenHash: string; expir
   };
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[character] || character);
-}
-
 function getFrontendUrl(req: Request): string {
   return (process.env.APP_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
 }
 
 async function sendVerificationEmail(req: Request, user: UserRecord, rawToken: string) {
   const verificationLink = `${getFrontendUrl(req)}/verify-email?token=${encodeURIComponent(rawToken)}`;
-  const displayName = escapeHtml(user.name || "there");
-  return getActiveEmailProvider().sendEmail({
-    to: user.email,
-    subject: "Verify your Tik Tik email",
-    text: `Hello ${user.name || "there"},\n\nPlease verify your Gmail address for Tik Tik by opening this link:\n${verificationLink}\n\nThis link expires in 24 hours and can only be used once.`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1c1917"><h1>Tik Tik</h1><h2>Verify your email address</h2><p>Hello ${displayName},</p><p>Please verify your Gmail address to activate your Tik Tik account.</p><p><a href="${verificationLink}" style="display:inline-block;padding:12px 20px;background:#1c1917;color:#fff;text-decoration:none;border-radius:6px">Verify your email</a></p><p>This link expires in 24 hours and can only be used once.</p></div>`,
+  const email = renderVerificationEmail({
+    userName: user.name,
+    verificationUrl: verificationLink,
   });
+  return getActiveEmailProvider().sendEmail({ to: user.email, ...email });
 }
 
 // JWT Helper
@@ -633,7 +634,7 @@ async function startServer() {
         const resetToken = crypto.randomUUID();
         await postgresDb.query(
           "UPDATE users SET reset_token = $1, updated_at = NOW() WHERE id = $2;",
-          [resetToken, userRow.id]
+          [hashResetToken(resetToken), userRow.id]
         );
 
         await getActiveEmailProvider()
@@ -670,7 +671,7 @@ async function startServer() {
       const updated = await postgresDb.queryOne<any>(
         `UPDATE users SET password_hash = $1, reset_token = NULL, updated_at = NOW()
          WHERE reset_token = $2 RETURNING id;`,
-        [hashPassword(new_password), token]
+        [hashPassword(new_password), hashResetToken(token)]
       );
 
       if (!updated) {

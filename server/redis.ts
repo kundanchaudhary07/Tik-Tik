@@ -9,6 +9,7 @@ export class RedisQueueEngine {
   private pingLatencyMs = 2;
   private client: ReturnType<typeof createClient> | null = null;
   private readyPromise: Promise<void>;
+  private initializationError: Error | null = null;
 
   // In-memory Redis keys representing Redis lists
   // Key: "queue:notifications" (PENDING)
@@ -41,19 +42,26 @@ export class RedisQueueEngine {
       this.isConnected = true;
       this.pingLatencyMs = 1;
     } catch {
-      this.isConnected = true;
+      const isProduction =
+        process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "production";
+      this.isConnected = !isProduction;
       this.isRealRedis = false;
       this.pingLatencyMs = -1;
       try {
         if (client.isOpen) await client.disconnect();
       } catch {
-        // Fallback remains available if Redis is not installed or running.
+      }
+      if (isProduction) {
+        this.initializationError = new Error("Redis is required in production but is unavailable.");
       }
     }
   }
 
   async waitUntilReady(): Promise<void> {
     await this.readyPromise;
+    if (this.initializationError) {
+      throw this.initializationError;
+    }
   }
 
   private async useRealRedis(): Promise<boolean> {
@@ -207,6 +215,15 @@ export class RedisQueueEngine {
     if (!this.isConnected) {
       return { pending: 0, processing: 0, deadLetter: 0 };
     }
+    if (await this.useRealRedis()) {
+      const [pending, processing, deadLetter] = await Promise.all([
+        this.client!.lLen("queue:notifications"),
+        this.client!.lLen("queue:processing"),
+        this.client!.lLen("queue:dead_letter"),
+      ]);
+      return { pending, processing, deadLetter };
+    }
+
     return {
       pending: (this.storage.get("queue:notifications") || []).length,
       processing: (this.storage.get("queue:processing") || []).length,

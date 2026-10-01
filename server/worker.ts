@@ -2,17 +2,8 @@ import { db } from "./store";
 import { postgresDb } from "./postgres";
 import { redis } from "./redis";
 import { getActiveEmailProvider } from "./email";
+import { renderReminderEmail } from "./emailTemplates";
 import { NotificationJobRecord, ActivityRecord, UserRecord } from "./types";
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[character] || character);
-}
 
 export class AsyncNotificationWorker {
   private timer: NodeJS.Timeout | null = null;
@@ -228,12 +219,18 @@ export class AsyncNotificationWorker {
       const emailProvider = getActiveEmailProvider();
       const dueTime = reminder?.remind_at || activity?.deadline || job.metadata?.remind_at;
       const message = reminder?.message || job.metadata?.message || `Your activity "${reminderTitle}" is due.`;
-      const importance = activity?.importance ? `Importance: ${activity.importance}/5\n` : "";
+      const email = renderReminderEmail({
+        userName: user.name,
+        activityTitle: reminderTitle,
+        dueAt: dueTime,
+        timezone: user.preferences?.timezone,
+        importance: activity?.importance,
+        notes: message,
+        appUrl: (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, ""),
+      });
       const emailResult = await emailProvider.sendEmail({
         to: user.email,
-        subject: `Reminder: ${reminderTitle}`,
-        text: `Hello ${user.name || "there"},\n\nThis is your Tik Tik reminder.\n\nActivity: ${reminderTitle}\n${dueTime ? `Due time: ${new Date(dueTime).toLocaleString()}\n` : ""}${importance}Note: ${message}\n\nTik Tik`,
-        html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1c1917"><h1>Tik Tik</h1><h2>Reminder: ${escapeHtml(reminderTitle)}</h2><p>Hello ${escapeHtml(user.name || "there")},</p><p>Your scheduled activity needs your attention.</p><p><strong>Activity:</strong> ${escapeHtml(reminderTitle)}<br/>${dueTime ? `<strong>Due time:</strong> ${escapeHtml(new Date(dueTime).toLocaleString())}<br/>` : ""}${importance ? `<strong>${escapeHtml(importance.trim())}</strong><br/>` : ""}<strong>Note:</strong> ${escapeHtml(message)}</p></div>`,
+        ...email,
       });
 
       if (!emailResult.success) {

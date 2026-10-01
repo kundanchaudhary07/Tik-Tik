@@ -1,11 +1,8 @@
-import dns from "dns";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 
 dotenv.config({ override: true });
-
-dns.setDefaultResultOrder("ipv4first");
 
 export interface EmailMessage {
   to: string;
@@ -56,25 +53,12 @@ export class RealEmailProvider implements EmailProvider {
     const looksLikeEmailAddress = this.host.includes("@");
 
     if (looksLikeEmailAddress) {
-      console.error(
-        "[SMTP CONFIG ERROR] SMTP_HOST must be a mail server hostname, not an email address."
-      );
-
-      console.error(
-        "[SMTP CONFIG ERROR] Expected something like smtp.gmail.com."
-      );
-
+      console.error("[SMTP CONFIG ERROR] SMTP_HOST must be a mail server hostname, not an email address.");
       this.smtpConfigured = false;
       return;
     }
 
-    this.smtpConfigured = Boolean(
-      this.host &&
-        this.port > 0 &&
-        this.user &&
-        this.pass &&
-        this.fromEmail
-    );
+    this.smtpConfigured = Boolean(this.host && this.port > 0 && this.user && this.pass && this.fromEmail);
 
     console.log("[SMTP CONFIG]", {
       host: this.host || "(missing)",
@@ -83,7 +67,6 @@ export class RealEmailProvider implements EmailProvider {
       from: this.fromEmail || "(missing)",
       secure: this.secure,
       configured: this.smtpConfigured,
-      dnsOrder: "ipv4first",
     });
 
     if (
@@ -109,61 +92,6 @@ export class RealEmailProvider implements EmailProvider {
         tls: {
           rejectUnauthorized: true,
           servername: this.host,
-        },
-
-        /**
-         * Force Nodemailer to use an IPv4 address.
-         *
-         * Render previously attempted:
-         * 2607:f8b0:...:587
-         *
-         * which resulted in:
-         * ENETUNREACH
-         */
-        lookup: (
-          hostname: string,
-          options: any,
-          callback: (
-            error: Error | null,
-            address?: string,
-            family?: number
-          ) => void
-        ) => {
-          dns.resolve4(
-            hostname,
-            (error, addresses) => {
-              if (error) {
-                console.error(
-                  `[SMTP DNS ERROR] IPv4 lookup failed for ${hostname}:`,
-                  error.message
-                );
-
-                callback(error);
-                return;
-              }
-
-              if (!addresses || addresses.length === 0) {
-                const lookupError = new Error(
-                  `No IPv4 address found for ${hostname}`
-                );
-
-                console.error(
-                  `[SMTP DNS ERROR] ${lookupError.message}`
-                );
-
-                callback(lookupError);
-                return;
-              }
-
-              const ipv4Address = addresses[0];
-
-              console.log(
-                `[SMTP DNS] ${hostname} resolved to IPv4 ${ipv4Address}`
-              );
-
-              callback(null, ipv4Address, 4);
-            }
-          );
         },
       });
     }
@@ -200,9 +128,7 @@ export class RealEmailProvider implements EmailProvider {
       };
     }
 
-    console.log(
-      `[SMTP VERIFY] Testing ${this.host}:${this.port} with forced IPv4`
-    );
+    console.log(`[SMTP VERIFY] Testing ${this.host}:${this.port}`);
 
     try {
       await this.transporter.verify();
@@ -270,9 +196,7 @@ export class RealEmailProvider implements EmailProvider {
     }
 
     try {
-      console.log(
-        `[EMAIL DISPATCH] Connecting to ${this.host}:${this.port} using forced IPv4 for recipient=${message.to}`
-      );
+      console.log(`[EMAIL DISPATCH] Connecting to ${this.host}:${this.port}`);
 
       const info = await this.transporter.sendMail({
         from: message.from || this.fromEmail,

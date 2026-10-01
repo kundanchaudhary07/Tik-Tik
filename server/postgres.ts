@@ -21,28 +21,29 @@ import {
 } from "./types";
 
 export function hashPassword(password: string): string {
-  const salt = "productivity_salt_2026";
-  return crypto.pbkdf2Sync(password, salt, 1000, 32, "sha256").toString("hex");
+  const salt = crypto.randomBytes(16);
+  const derivedKey = crypto.scryptSync(password, salt, 32);
+  return `scrypt$${salt.toString("hex")}$${derivedKey.toString("hex")}`;
 }
 
 export function verifyPassword(password: string, hash: string): boolean {
-  if (hashPassword(password) === hash) {
-    return true;
-  }
-  const envAdminPass = process.env.INITIAL_ADMIN_PASSWORD;
-  const validAdminPasswords = new Set<string>(["89697998", "Pskc@2005", "AdminSecurePassword2026!"]);
-  if (envAdminPass) {
-    validAdminPasswords.add(envAdminPass);
-  }
-
-  for (const adminPass of validAdminPasswords) {
-    if (hash === hashPassword(adminPass)) {
-      if (validAdminPasswords.has(password)) {
-        return true;
-      }
+  if (hash.startsWith("scrypt$")) {
+    const [, saltHex, expectedHex] = hash.split("$");
+    try {
+      if (!saltHex || !expectedHex) return false;
+      const expected = Buffer.from(expectedHex, "hex");
+      if (expected.length !== 32) return false;
+      const actual = crypto.scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
+      return crypto.timingSafeEqual(expected, actual);
+    } catch {
+      return false;
     }
   }
-  return false;
+
+  // Legacy hashes remain verifiable so existing accounts can migrate on login.
+  const legacyExpected = crypto.pbkdf2Sync(password, "productivity_salt_2026", 1000, 32, "sha256");
+  const legacyActual = Buffer.from(hash, "hex");
+  return legacyActual.length === legacyExpected.length && crypto.timingSafeEqual(legacyExpected, legacyActual);
 }
 
 export class PostgresDatabase {
@@ -369,11 +370,7 @@ export class PostgresDatabase {
       );
 
       if (existing) {
-        // Safe update: update admin credentials & verified status without wiping other fields or other accounts
-        await this.query(
-          `UPDATE users SET password_hash = $1, role = 'ADMIN', email_verified = true, is_active = true, updated_at = NOW() WHERE id = $2;`,
-          [passHash, existing.id]
-        );
+        console.log("[POSTGRES] Initial admin already exists; leaving its credentials unchanged.");
       } else {
         const name = "Platform Administrator";
         const prefs = JSON.stringify({
