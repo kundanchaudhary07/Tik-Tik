@@ -4,7 +4,7 @@ import { postgresDb } from "../postgres";
 import { redis } from "../redis";
 import { worker } from "../worker";
 import { scheduler } from "../scheduler";
-import { testEmailProvider, setActiveEmailProvider, realEmailProvider } from "../email";
+import { testEmailProvider, setActiveEmailProvider, resetActiveEmailProvider } from "../email";
 import { requireAdminMiddleware } from "./admin";
 import { NotificationJobRecord, ActivityRecord, ReminderRecord } from "../types";
 
@@ -76,7 +76,7 @@ failureLabRouter.post("/email-transient", (req: Request, res: Response) => {
     testEmailProvider.failureMode === "TRANSIENT_TIMEOUT" ? "NONE" : "TRANSIENT_TIMEOUT";
 
   if (testEmailProvider.failureMode === "NONE") {
-    setActiveEmailProvider(realEmailProvider);
+    resetActiveEmailProvider();
   }
 
   res.json({
@@ -96,7 +96,7 @@ failureLabRouter.post("/email-permanent", (req: Request, res: Response) => {
     testEmailProvider.failureMode === "PERMANENT_REJECT" ? "NONE" : "PERMANENT_REJECT";
 
   if (testEmailProvider.failureMode === "NONE") {
-    setActiveEmailProvider(realEmailProvider);
+    resetActiveEmailProvider();
   }
 
   res.json({

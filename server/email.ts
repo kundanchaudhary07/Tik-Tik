@@ -6,6 +6,7 @@ dotenv.config({ override: true });
 
 export interface EmailMessage {
   to: string;
+  toName?: string;
   subject: string;
   text: string;
   html?: string;
@@ -262,6 +263,109 @@ export class RealEmailProvider implements EmailProvider {
   }
 }
 
+export class BrevoEmailProvider implements EmailProvider {
+  private readonly apiUrl = "https://api.brevo.com/v3/smtp/email";
+  private readonly apiKey: string;
+  private readonly fromEmail: string;
+  private readonly fromName: string;
+  private sentCount = 0;
+
+  constructor() {
+    this.apiKey = (process.env.BREVO_API_KEY || "").trim();
+    this.fromEmail = (process.env.BREVO_FROM_EMAIL || "").trim();
+    this.fromName = (process.env.BREVO_FROM_NAME || "Tik Tik").trim() || "Tik Tik";
+  }
+
+  getProviderName(): string {
+    return "Brevo HTTPS API";
+  }
+
+  getSentCount(): number {
+    return this.sentCount;
+  }
+
+  async sendEmail(message: EmailMessage): Promise<EmailSendResult> {
+    if (!this.apiKey || !this.fromEmail) {
+      return {
+        success: false,
+        error: "BREVO_NOT_CONFIGURED: BREVO_API_KEY and BREVO_FROM_EMAIL are required.",
+        isTransient: false,
+      };
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(message.to)) {
+      return {
+        success: false,
+        error: `INVALID_EMAIL: Recipient address syntax rejected: ${message.to}`,
+        isTransient: false,
+      };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "api-key": this.apiKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: {
+            name: this.fromName,
+            email: message.from || this.fromEmail,
+          },
+          to: [
+            {
+              email: message.to,
+              ...(message.toName ? { name: message.toName } : {}),
+            },
+          ],
+          subject: message.subject,
+          htmlContent: message.html || message.text.replace(/\n/g, "<br/>") ,
+          textContent: message.text,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const isTransient = response.status === 408 || response.status === 429 || response.status >= 500;
+        console.error("[EMAIL DISPATCH ERROR]", {
+          provider: "Brevo",
+          status: response.status,
+        });
+        return {
+          success: false,
+          error: `BREVO_HTTP_ERROR: ${response.status}`,
+          isTransient,
+        };
+      }
+
+      const result = await response.json() as { messageId?: string };
+      this.sentCount++;
+      return {
+        success: true,
+        messageId: result.messageId,
+      };
+    } catch (err: any) {
+      const isTimeout = err?.name === "AbortError";
+      console.error("[EMAIL DISPATCH ERROR]", {
+        provider: "Brevo",
+        error: isTimeout ? "REQUEST_TIMEOUT" : "REQUEST_FAILED",
+      });
+      return {
+        success: false,
+        error: isTimeout ? "BREVO_REQUEST_TIMEOUT" : "BREVO_REQUEST_FAILED",
+        isTransient: true,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 export class TestEmailProvider
   implements EmailProvider
 {
@@ -351,11 +455,22 @@ export class TestEmailProvider
 export const realEmailProvider =
   new RealEmailProvider();
 
+export const brevoEmailProvider =
+  new BrevoEmailProvider();
+
 export const testEmailProvider =
   new TestEmailProvider();
 
-let activeProvider: EmailProvider =
-  realEmailProvider;
+function configuredEmailProvider(): EmailProvider {
+  const configuredName = (process.env.EMAIL_PROVIDER || "").trim().toLowerCase();
+  const brevoConfigured = Boolean(
+    process.env.BREVO_API_KEY?.trim() && process.env.BREVO_FROM_EMAIL?.trim()
+  );
+  const useBrevo = configuredName === "brevo" || (!configuredName && brevoConfigured);
+  return useBrevo ? brevoEmailProvider : realEmailProvider;
+}
+
+let activeProvider: EmailProvider = configuredEmailProvider();
 
 export function getActiveEmailProvider(): EmailProvider {
   return activeProvider;
@@ -365,4 +480,8 @@ export function setActiveEmailProvider(
   provider: EmailProvider
 ) {
   activeProvider = provider;
+}
+
+export function resetActiveEmailProvider() {
+  activeProvider = configuredEmailProvider();
 }

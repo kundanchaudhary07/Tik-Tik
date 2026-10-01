@@ -72,7 +72,7 @@ async function sendVerificationEmail(req: Request, user: UserRecord, rawToken: s
     userName: user.name,
     verificationUrl: verificationLink,
   });
-  return getActiveEmailProvider().sendEmail({ to: user.email, ...email });
+  return getActiveEmailProvider().sendEmail({ to: user.email, toName: user.name || undefined, ...email });
 }
 
 // JWT Helper
@@ -640,6 +640,7 @@ async function startServer() {
         await getActiveEmailProvider()
           .sendEmail({
             to: userRow.email,
+            toName: userRow.name || undefined,
             subject: "Password Reset Request - Tik Tik",
             text: `Hello ${userRow.name || "there"},\n\nWe received a request to reset your password.\n\nPlease use the following reset token or link to choose a new password:\nToken: ${resetToken}\n\nLink: ${req.protocol}://${req.get("host")}/reset-password?token=${resetToken}\n\nIf you did not request this, you can safely ignore this email.`,
             html: `<p>Hello ${userRow.name || "there"},</p><p>We received a request to reset your password.</p><p><a href="${req.protocol}://${req.get("host")}/reset-password?token=${resetToken}">Click here to reset your password</a></p><p>Or enter this reset token in the app: <code>${resetToken}</code></p><p>If you did not request this, you can safely ignore this email.</p>`,

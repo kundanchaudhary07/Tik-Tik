@@ -230,6 +230,7 @@ export class AsyncNotificationWorker {
       });
       const emailResult = await emailProvider.sendEmail({
         to: user.email,
+        toName: user.name || undefined,
         ...email,
       });
 
